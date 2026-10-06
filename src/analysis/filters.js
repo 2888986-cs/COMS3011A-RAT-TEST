@@ -59,6 +59,8 @@ function applyFilters(commits, filters, resolveCommitAuthor) {
   const authorSet = filters.authorIds.length ? new Set(filters.authorIds) : null;
 
   return commits.filter((commit) => {
+    if (commit.parents.length > 1) return false;
+
     if (hashSet) {
       let inSelection = hashSet.has(commit.hash);
       if (!inSelection) {

@@ -42,6 +42,7 @@ async function computeFileMetrics(commits, filters, repoData, resolver) {
   for (const commit of commits) {
     const authorId = resolver.resolveCommit(commit);
     for (const file of commit.files) {
+      if (file.binary) continue;
       if (!matchesPath(file.path, filters.path)) continue;
 
       let entry = map.get(file.path);
@@ -102,6 +103,9 @@ async function computeFileMetrics(commits, filters, repoData, resolver) {
       insertions: file.insertions,
       deletions: file.deletions,
       churn: file.insertions + file.deletions,
+      growth: file.insertions - file.deletions,
+      modificationFrequency: commits.length > 0 ? +(file.commits / commits.length).toFixed(4) : 0,
+      churnRate: commits.length > 0 ? +((file.insertions + file.deletions) / commits.length).toFixed(4) : 0,
       authorCount: file.authors.size,
       currentLoc: hasLoc ? file.loc : null,
       firstDate: file.firstDate,

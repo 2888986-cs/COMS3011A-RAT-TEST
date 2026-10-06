@@ -1,19 +1,42 @@
 const NUMSTAT_RE = /^(\d+|-)\t(\d+|-)\t(.*)$/;
 
-const META_FORMAT = '%x1E%H%x1F%an%x1F%ae%x1F%aI%x1F%P%x1F%s';
+const META_FORMAT = '%x1E%H%x1F%an%x1F%ae%x1F%cI%x1F%P%x1F%s';
 const NUMSTAT_FORMAT = '%x1E%H';
+
+/**
+ * Parses a numstat path column that may carry rename notation.
+ *
+ * With rename detection enabled git prints renamed paths either as
+ * `old => new` or with brace shorthand such as `prefix/{old => new}/suffix`
+ * (possibly with several brace groups). Plain paths come back untouched with
+ * a null oldPath; renamed paths return both the previous and current path.
+ */
+function parseRenamePath(raw) {
+  if (!raw.includes(' => ')) {
+    return { path: raw, oldPath: null };
+  }
+  if (/\{[^{}]* => [^{}]*\}/.test(raw)) {
+    const braceRe = /\{([^{}]*) => ([^{}]*)\}/g;
+    return {
+      path: raw.replace(braceRe, '$2'),
+      oldPath: raw.replace(braceRe, '$1'),
+    };
+  }
+  const sep = raw.indexOf(' => ');
+  return { path: raw.slice(sep + 4), oldPath: raw.slice(0, sep) };
+}
 
 /**
  * Loads the full commit history of a repository.
  *
  * Two passes are used for robust parsing:
- *  1. metadata pass  - hash, author name/email, author date, parents, subject
+ *  1. metadata pass  - hash, author name/email, committer date, parents, subject
  *  2. numstat pass   - per-commit file change statistics
  * Records are delimited with \x1E and fields with \x1F.
  *
  * Returns commits newest-first with:
  *   { hash, authorName, authorEmail, dateISO, date, time, parents, subject,
- *     insertions, deletions, files: [{ path, insertions, deletions }], fileCount }
+ *     insertions, deletions, files: [{ path, oldPath, insertions, deletions, binary }], fileCount }
  */
 async function loadCommits(git) {
   let metaOutput = '';
@@ -59,7 +82,7 @@ async function loadCommits(git) {
 
   let statsOutput = '';
   try {
-    statsOutput = await git.raw(['log', '--numstat', '--no-renames', `--pretty=format:${NUMSTAT_FORMAT}`]);
+    statsOutput = await git.raw(['log', '--numstat', '-M50%', `--pretty=format:${NUMSTAT_FORMAT}`]);
   } catch {
     // Stats are optional; metadata already captured.
     return commits;
@@ -76,10 +99,13 @@ async function loadCommits(git) {
       if (!match) continue;
       const insertions = match[1] === '-' ? 0 : parseInt(match[1], 10);
       const deletions = match[2] === '-' ? 0 : parseInt(match[2], 10);
-      const filePath = match[3];
-      commit.files.push({ path: filePath, insertions, deletions });
-      commit.insertions += insertions;
-      commit.deletions += deletions;
+      const binary = match[1] === '-' && match[2] === '-';
+      const { path, oldPath } = parseRenamePath(match[3]);
+      commit.files.push({ path, oldPath, insertions, deletions, binary });
+      if (!binary) {
+        commit.insertions += insertions;
+        commit.deletions += deletions;
+      }
     }
     commit.fileCount = commit.files.length;
   }

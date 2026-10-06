@@ -117,7 +117,8 @@
                   <thead>
                     <tr>
                       <th>Path</th><th class="num">Commits</th><th class="num">+</th><th class="num">−</th>
-                      <th class="num">Churn</th><th class="num">Authors</th><th class="num">LOC (now)</th><th>Last change</th>
+                      <th class="num">Churn</th><th class="num">Growth</th><th class="num">Mod Freq</th><th class="num">Churn Rate</th>
+                      <th class="num">Authors</th><th class="num">LOC (now)</th><th>Last change</th>
                     </tr>
                   </thead>
                   <tbody></tbody>
@@ -133,13 +134,20 @@
                   <thead>
                     <tr>
                       <th>Directory</th><th class="num">Files</th><th class="num">Commits</th><th class="num">+</th>
-                      <th class="num">−</th><th class="num">Churn</th><th class="num">Authors</th><th class="num">LOC (now)</th>
+                      <th class="num">−</th><th class="num">Churn</th><th class="num">Growth</th><th class="num">Mod Freq</th><th class="num">Churn Rate</th>
+                      <th class="num">Authors</th><th class="num">LOC (now)</th>
                     </tr>
                   </thead>
                   <tbody></tbody>
                 </table>
               </div>
               <p id="dirs-empty" class="muted small" hidden>No directories match the current filters.</p>
+            </div>
+
+            <div class="card">
+              <h3>Author Metrics</h3>
+              <p class="hint" id="author-metrics-hint"></p>
+              <div id="author-metrics-content"></div>
             </div>
           </div>
         </div>

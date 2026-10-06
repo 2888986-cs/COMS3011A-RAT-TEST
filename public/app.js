@@ -349,6 +349,7 @@ function renderMetrics(data) {
   renderCommitSetCard(data.commitSet, data.filters);
   renderFilesTable(data.files);
   renderDirsTable(data.directories);
+  renderAuthorMetrics(data.commitSet.authorFileMetrics);
 }
 
 function renderRepositoryCard(repo) {
@@ -362,6 +363,8 @@ function renderRepositoryCard(repo) {
     stat('Lines (working tree)', fmtInt(ws.totalLoc)),
     stat('Insertions (all)', fmtInt(repo.totalInsertions), 'pos'),
     stat('Deletions (all)', fmtInt(repo.totalDeletions), 'neg'),
+    stat('Total churn (all)', fmtInt(repo.totalChurn)),
+    stat('Growth (all)', fmtInt(repo.growth), repo.growth >= 0 ? 'pos' : 'neg'),
     stat('First commit', repo.firstCommit ? fmtDay(repo.firstCommit.date) : '—'),
     stat('Last commit', repo.lastCommit ? fmtDay(repo.lastCommit.date) : '—'),
   ].join('');
@@ -387,8 +390,8 @@ function renderCommitSetCard(set, filters) {
     stat('Insertions', fmtInt(set.totalInsertions), 'pos'),
     stat('Deletions', fmtInt(set.totalDeletions), 'neg'),
     stat('Net change', fmtInt(set.netChange), set.netChange >= 0 ? 'pos' : 'neg'),
+    stat('Total churn', fmtInt(set.totalChurn)),
     stat('Avg files / commit', set.avgFilesPerCommit),
-    stat('Merge commits', fmtInt(set.mergeCommits)),
   ].join('');
 
   const authors = set.authors.slice(0, 12);
@@ -440,6 +443,9 @@ function renderFilesTable(files) {
       <td class="num"><span class="pos">+${fmtInt(f.insertions)}</span></td>
       <td class="num"><span class="neg">−${fmtInt(f.deletions)}</span></td>
       <td class="num">${fmtInt(f.churn)}</td>
+      <td class="num"><span class="${(f.growth ?? 0) >= 0 ? 'pos' : 'neg'}">${fmtInt(f.growth)}</span></td>
+      <td class="num">${f.modificationFrequency?.toFixed(4) ?? '—'}</td>
+      <td class="num">${f.churnRate?.toFixed(2) ?? '—'}</td>
       <td class="num">${fmtInt(f.authorCount)}</td>
       <td class="num">${f.currentLoc === null || f.currentLoc === undefined ? '<span class="muted">—</span>' : fmtInt(f.currentLoc)}</td>
       <td>${fmtDay(f.lastDate)}</td>
@@ -462,6 +468,9 @@ function renderDirsTable(dirs) {
       <td class="num"><span class="pos">+${fmtInt(d.insertions)}</span></td>
       <td class="num"><span class="neg">−${fmtInt(d.deletions)}</span></td>
       <td class="num">${fmtInt(d.churn)}</td>
+      <td class="num"><span class="${(d.growth ?? 0) >= 0 ? 'pos' : 'neg'}">${fmtInt(d.growth)}</span></td>
+      <td class="num">${d.modificationFrequency?.toFixed(4) ?? '—'}</td>
+      <td class="num">${d.churnRate?.toFixed(2) ?? '—'}</td>
       <td class="num">${fmtInt(d.authorCount)}</td>
       <td class="num">${fmtInt(d.loc)}</td>
     </tr>
@@ -470,6 +479,55 @@ function renderDirsTable(dirs) {
   $('#dirs-hint').textContent = dirs.directoryCount
     ? `${fmtInt(dirs.directoryCount)} director${dirs.directoryCount === 1 ? 'y' : 'ies'} in selection`
     : 'no directories match';
+}
+
+const AUTHOR_FILES_LIMIT = 20;
+function renderAuthorMetrics(authorFileMetrics) {
+  const content = $('#author-metrics-content');
+  const hint = $('#author-metrics-hint');
+  const authors = Array.isArray(authorFileMetrics) ? authorFileMetrics : [];
+  if (!authors.length) {
+    hint.textContent = '';
+    content.innerHTML = '<p class="muted small">No author metrics available</p>';
+    return;
+  }
+  hint.textContent =
+    `Per-author file activity in the current selection — ${fmtInt(authors.length)} author${authors.length === 1 ? '' : 's'}`;
+
+  content.innerHTML = authors.map((a, idx) => {
+    const files = a.files || [];
+    const topFiles = files.slice(0, AUTHOR_FILES_LIMIT);
+    const rows = topFiles.map((f) => `
+      <tr>
+        <td class="path">${escapeHtml(f.path)}</td>
+        <td class="num">${fmtInt(f.modifications)}</td>
+        <td class="num">${fmtInt(f.churn)}</td>
+        <td class="num">${((f.ownership ?? 0) * 100).toFixed(2)}%</td>
+      </tr>
+    `).join('');
+    const truncated = files.length > topFiles.length
+      ? `<p class="muted small">Showing top ${AUTHOR_FILES_LIMIT} of ${fmtInt(files.length)} file${files.length === 1 ? '' : 's'} by churn.</p>`
+      : '';
+    return `
+      <details class="author-block" ${idx === 0 ? 'open' : ''}>
+        <summary style="display:flex;gap:10px;align-items:baseline;cursor:pointer;padding:6px 2px">
+          <span class="author-name">${escapeHtml(a.authorName)}</span>
+          <span class="muted small">${fmtInt(a.totalModifications)} modification${a.totalModifications === 1 ? '' : 's'} · ${fmtInt(a.totalChurn)} churn</span>
+        </summary>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th><th class="num">Modifications</th><th class="num">Churn</th><th class="num">Ownership</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        ${truncated}
+      </details>
+    `;
+  }).join('');
 }
 
 /* ---------------------------------------------------------------- authors tab */

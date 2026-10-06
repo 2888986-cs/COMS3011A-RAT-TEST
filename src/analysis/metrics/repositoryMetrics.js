@@ -83,6 +83,8 @@ async function computeRepositoryMetrics(entry, repoData, resolver) {
     ageDays: oldest && newest ? Math.max(0, Math.round((newest.time - oldest.time) / 86400000)) : 0,
     totalInsertions,
     totalDeletions,
+    totalChurn: totalInsertions + totalDeletions,
+    growth: totalInsertions - totalDeletions,
     workingTree: repoData.fsStats,
   };
 }
