@@ -17,6 +17,11 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute must always win over component display rules
+   (e.g. .modal-backdrop { display: flex }), otherwise "hidden" modals,
+   forms and buttons would still be rendered and block the page. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--bg);
