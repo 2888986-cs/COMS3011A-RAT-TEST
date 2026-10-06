@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RAT — Repository Analysis Tool</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">RAT</span>
+      <span class="tagline">Repository Analysis Tool</span>
+    </div>
+    <div class="topbar-meta" id="topbar-meta"></div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <h2>Repositories</h2>
+        <button id="add-repo-btn" class="btn primary" title="Add a repository">+ Add</button>
+      </div>
+      <ul id="repo-list" class="repo-list"></ul>
+      <p id="repo-list-empty" class="muted small">
+        No repositories yet. Add one via ZIP upload (with .git) or a remote clone URL.
+      </p>
+    </aside>
+
+    <main class="content">
+      <section id="placeholder" class="placeholder">
+        <h2>Select a repository</h2>
+        <p>
+          Add a repository (a ZIP containing <code>.git</code>, or a remote URL that is deeply
+          cloned), then explore metrics filtered by author, file or directory, and commit sets.
+        </p>
+      </section>
+
+      <section id="repo-view" hidden>
+        <div class="repo-header">
+          <div>
+            <h1 id="repo-name"></h1>
+            <div class="repo-meta" id="repo-meta"></div>
+          </div>
+          <div class="repo-actions">
+            <button id="delete-repo-btn" class="btn danger ghost">Delete repository</button>
+          </div>
+        </div>
+
+        <nav class="tabs">
+          <button class="tab active" data-tab="dashboard">Dashboard</button>
+          <button class="tab" data-tab="authors">Authors</button>
+        </nav>
+
+        <div id="tab-dashboard" class="tab-panel">
+          <div class="filters card">
+            <div class="filter">
+              <label>Authors</label>
+              <details class="dropdown" id="author-dropdown">
+                <summary id="author-dropdown-summary">All authors</summary>
+                <div class="dropdown-panel" id="author-options"></div>
+              </details>
+            </div>
+            <div class="filter">
+              <label for="path-input">File / directory</label>
+              <input id="path-input" list="path-options" placeholder="e.g. src/ or src/app.js" autocomplete="off" />
+              <datalist id="path-options"></datalist>
+            </div>
+            <div class="filter">
+              <label for="date-from">From</label>
+              <input id="date-from" type="date" />
+            </div>
+            <div class="filter">
+              <label for="date-to">To</label>
+              <input id="date-to" type="date" />
+            </div>
+            <div class="filter">
+              <label>Commits</label>
+              <div class="commit-filter">
+                <button id="pick-commits-btn" class="btn">Select commits…</button>
+                <button id="clear-commits-btn" class="btn ghost small" hidden>Clear</button>
+                <span id="commit-filter-status" class="muted small">Period of time</span>
+              </div>
+            </div>
+            <div class="filter actions">
+              <button id="reset-filters-btn" class="btn ghost">Reset filters</button>
+            </div>
+          </div>
+
+          <p id="metrics-status" class="muted small"></p>
+
+          <div class="cards">
+            <div class="card metric-card" id="card-repository">
+              <h3>Repository Metrics <span class="hint">whole history (not filtered)</span></h3>
+              <div class="stat-grid" id="repo-stats"></div>
+              <div id="repo-languages"></div>
+            </div>
+
+            <div class="card metric-card" id="card-commitset">
+              <h3>Commit Set Metrics <span class="hint" id="commitset-hint"></span></h3>
+              <div class="stat-grid" id="commitset-stats"></div>
+              <div class="chart-block">
+                <h4>Commits per author</h4>
+                <div id="commitset-authors" class="hbars"></div>
+              </div>
+              <div class="chart-block">
+                <h4>Commits over time</h4>
+                <div id="commitset-timeline" class="timeline"></div>
+                <div class="timeline-labels" id="commitset-timeline-labels"></div>
+              </div>
+            </div>
+
+            <div class="card metric-card wide" id="card-files">
+              <h3>File Metrics <span class="hint" id="files-hint"></span></h3>
+              <div class="table-wrap">
+                <table id="files-table">
+                  <thead>
+                    <tr>
+                      <th>Path</th><th class="num">Commits</th><th class="num">+</th><th class="num">−</th>
+                      <th class="num">Churn</th><th class="num">Authors</th><th class="num">LOC (now)</th><th>Last change</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <p id="files-empty" class="muted small" hidden>No files match the current filters.</p>
+            </div>
+
+            <div class="card metric-card wide" id="card-directories">
+              <h3>Directory Metrics <span class="hint" id="dirs-hint"></span></h3>
+              <div class="table-wrap">
+                <table id="dirs-table">
+                  <thead>
+                    <tr>
+                      <th>Directory</th><th class="num">Files</th><th class="num">Commits</th><th class="num">+</th>
+                      <th class="num">−</th><th class="num">Churn</th><th class="num">Authors</th><th class="num">LOC (now)</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <p id="dirs-empty" class="muted small" hidden>No directories match the current filters.</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="tab-authors" class="tab-panel" hidden>
+          <div class="card">
+            <h3>Author merging</h3>
+            <p class="muted small">
+              Identities are resolved with the repository <code>.mailmap</code> when present.
+              You can also merge authors manually — merged authors are treated as one contributor
+              in every metric. Merging merges the selected authors' email addresses.
+            </p>
+            <div id="mailmap-info" class="mailmap-info"></div>
+            <div class="merge-bar">
+              <span id="merge-selection-info" class="muted small">0 authors selected</span>
+              <input id="merge-name-input" placeholder="Merged display name (optional)" />
+              <button id="merge-authors-btn" class="btn primary" disabled>Merge selected</button>
+              <button id="reset-merges-btn" class="btn ghost">Reset manual merges</button>
+            </div>
+            <div class="table-wrap">
+              <table id="authors-table">
+                <thead>
+                  <tr>
+                    <th class="check"></th><th>Author</th><th>Email addresses</th><th>Raw git identities</th><th class="num">Commits</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Add repository modal -->
+  <div class="modal-backdrop" id="add-repo-modal" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h3>Add repository</h3>
+        <button class="icon-btn" data-close-modal="add-repo-modal" title="Close">×</button>
+      </div>
+      <div class="modal-tabs">
+        <button class="modal-tab active" data-addtab="url">Clone URL</button>
+        <button class="modal-tab" data-addtab="zip">Upload ZIP</button>
+      </div>
+      <div class="modal-body">
+        <form id="clone-form" class="add-form">
+          <label>Repository URL
+            <input id="clone-url" placeholder="https://github.com/user/repo.git" required />
+          </label>
+          <label>Name (optional)
+            <input id="clone-name" placeholder="my-repo" />
+          </label>
+          <button class="btn primary" type="submit">Clone repository</button>
+          <p class="muted small">A full deep clone is performed, including the complete commit history.</p>
+        </form>
+        <form id="zip-form" class="add-form" hidden>
+          <label>Repository ZIP (must contain the .git directory)
+            <input id="zip-file" type="file" accept=".zip" required />
+          </label>
+          <button class="btn primary" type="submit">Upload &amp; extract</button>
+          <p class="muted small">The archive is extracted, validated for a .git directory, and its working tree restored.</p>
+        </form>
+        <p id="add-repo-status" class="status"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Commit picker modal -->
+  <div class="modal-backdrop" id="commits-modal" hidden>
+    <div class="modal wide">
+      <div class="modal-head">
+        <h3>Select commits</h3>
+        <button class="icon-btn" data-close-modal="commits-modal" title="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="commit-picker-controls">
+          <input id="commit-search" placeholder="Search by subject, author or hash" autocomplete="off" />
+          <button id="select-all-commits" class="btn small">Select all shown</button>
+          <button id="clear-commit-selection" class="btn small ghost">Clear</button>
+          <span id="commit-picker-count" class="muted small"></span>
+        </div>
+        <div id="commit-list" class="commit-list"></div>
+        <div class="modal-foot">
+          <button id="apply-commits-btn" class="btn primary">Apply selection</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

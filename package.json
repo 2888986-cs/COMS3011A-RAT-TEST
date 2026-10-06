@@ -1,0 +1,21 @@
+{
+  "name": "coms3011a-rat",
+  "version": "0.1.0",
+  "description": "Repository Analysis Tool (RAT) - a web dashboard that measures metrics across multiple Git repositories, with filtering by repository, author, file/directory and commit sets.",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "adm-zip": "^0.6.1",
+    "express": "^5.2.1",
+    "multer": "^2.4.0",
+    "simple-git": "^4.0.2"
+  }
+}
