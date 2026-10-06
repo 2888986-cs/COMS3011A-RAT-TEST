@@ -272,6 +272,29 @@ th.check, td.check { width: 30px; }
 .status.success { color: var(--accent-2); }
 
 @keyframes rat-shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.skeleton-line {
+  height: 14px;
+  border-radius: 4px;
+  background: var(--card-2);
+  position: relative;
+  overflow: hidden;
+}
+.skeleton-line::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(79,140,255,0.06), transparent);
+  background-size: 200% 100%;
+  animation: rat-shimmer 1.5s infinite;
+}
+.skeleton-stat {
+  background: var(--card-2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .loading-shimmer { position: relative; }
 .loading-shimmer::after {
   content: ''; position: absolute; inset: 0;

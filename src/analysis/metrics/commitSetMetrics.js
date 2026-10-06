@@ -68,12 +68,14 @@ function computeCommitSetMetrics(commits, resolver) {
       });
     }
     files.sort((a, b) => b.churn - a.churn || a.path.localeCompare(b.path));
+    const cappedFiles = files.slice(0, 50);
     authorFileMetrics.push({
       authorId,
       authorName: resolver.authorName(authorId),
       totalModifications: files.reduce((s, f) => s + f.modifications, 0),
       totalChurn: files.reduce((s, f) => s + f.churn, 0),
-      files,
+      totalFiles: files.length,
+      files: cappedFiles,
     });
   }
   authorFileMetrics.sort((a, b) => b.totalChurn - a.totalChurn);

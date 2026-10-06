@@ -8,9 +8,13 @@ const state = {
   mailmap: [],
   manualMerges: [],
   commits: [],
+  commitCount: 0,
   tree: { files: [], dirs: [] },
   filters: { authorIds: [], path: '', from: '', to: '', hashes: [] },
   picker: { selected: new Set(), search: '' },
+  pickerOffset: 0,
+  pickerTotal: 0,
+  pickerHasMore: false,
   mergeSelection: new Set(),
   metrics: null,
   fileSort: { key: null, asc: true },
@@ -32,6 +36,20 @@ const fmtDateTime = (iso) => {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
 };
 const fmtDay = (iso) => (iso ? String(iso).slice(0, 10) : '—');
+
+function parseHash() {
+  const hash = location.hash.slice(1);
+  const params = new URLSearchParams(hash);
+  return { repoId: params.get('repo') || null, tab: params.get('tab') || 'dashboard' };
+}
+
+function updateHash() {
+  if (state.currentRepoId) {
+    const tab = $('#tab-dashboard').hidden ? 'authors' : 'dashboard';
+    const nextHash = `repo=${state.currentRepoId}&tab=${tab}`;
+    if (location.hash.slice(1) !== nextHash) location.hash = nextHash;
+  }
+}
 
 function setupSortableTable(tableId, getSortState, getDataArray, renderBodyFn) {
   const table = $(`#${tableId}`);
@@ -89,6 +107,13 @@ $$('.modal-backdrop').forEach((backdrop) => {
   backdrop.addEventListener('click', (e) => {
     if (e.target === backdrop) backdrop.hidden = true;
   });
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const open = document.querySelector('.modal-backdrop:not([hidden])');
+    if (open) open.hidden = true;
+  }
 });
 
 /* ---------------------------------------------------------------- repo list */
@@ -212,34 +237,37 @@ function showGlobalError(err) {
 
 async function selectRepo(id) {
   state.currentRepoId = id;
+  state.commitCount = 0;
+  state.commits = [];
   state.filters = { authorIds: [], path: '', from: '', to: '', hashes: [] };
   state.mergeSelection = new Set();
   $('#placeholder').hidden = true;
   $('#repo-view').hidden = false;
   renderRepoList();
   switchTab('dashboard');
-  $('#metrics-status').textContent = 'Loading repository data…';
   $('#metrics-status').style.color = '';
 
-  const [authorsData, commitsData, treeData] = await Promise.all([
-    api(`/api/repos/${id}/authors`),
-    api(`/api/repos/${id}/commits`),
-    api(`/api/repos/${id}/tree`),
-  ]);
-  if (state.currentRepoId !== id) return; // user switched while loading
+  $('#metrics-status').textContent = 'Loading authors…';
+  const authorsData = await api(`/api/repos/${id}/authors`);
+  if (state.currentRepoId !== id) return;
+
+  $('#metrics-status').textContent = 'Loading file tree…';
+  const treeData = await api(`/api/repos/${id}/tree`);
+  if (state.currentRepoId !== id) return;
 
   state.authors = authorsData.authors || [];
   state.mailmap = authorsData.mailmap || [];
   state.manualMerges = authorsData.manualMerges || [];
-  state.commits = commitsData.commits || [];
   state.tree = treeData || { files: [], dirs: [] };
 
   renderRepoHeader();
+  renderSkeleton();
   resetFilterInputs();
   renderAuthorFilter();
   renderPathOptions();
   renderAuthorsTab();
   await loadMetrics();
+  updateHash();
 }
 
 function renderRepoHeader() {
@@ -250,9 +278,23 @@ function renderRepoHeader() {
     <span class="chip">${repo.sourceType === 'zip' ? 'ZIP upload' : 'clone URL'}</span>
     <span class="chip" title="${escapeHtml(repo.sourceValue)}">${escapeHtml(shortSource(repo.sourceValue))}</span>
     <span class="chip">added ${fmtDay(repo.addedAt)}</span>
-    <span class="chip">${fmtInt(state.commits.length)} commits</span>
+    <span class="chip">${state.commitCount ? fmtInt(state.commitCount) : '…'} commits</span>
     <span class="chip">${fmtInt(state.authors.length)} authors</span>
   `;
+}
+
+function renderSkeleton() {
+  const shimmer = '<div class="skeleton-line"></div>';
+  const statPlaceholder = '<div class="stat skeleton-stat"><div class="skeleton-line" style="width:60%;height:12px"></div><div class="skeleton-line" style="width:40%;height:18px;margin-top:4px"></div></div>';
+  const statGrid = `<div class="stat-grid">${statPlaceholder.repeat(6)}</div>`;
+  $('#repo-stats').innerHTML = statGrid;
+  $('#repo-languages').innerHTML = shimmer;
+  $('#commitset-stats').innerHTML = statGrid;
+  $('#commitset-authors').innerHTML = shimmer.repeat(3);
+  $('#commitset-timeline').innerHTML = shimmer;
+  $('#files-table tbody').innerHTML = '<tr><td colspan="11">' + shimmer + '</td></tr>';
+  $('#dirs-table tbody').innerHTML = '<tr><td colspan="11">' + shimmer + '</td></tr>';
+  $('#author-metrics-content').innerHTML = shimmer;
 }
 
 function shortSource(value) {
@@ -264,6 +306,7 @@ function switchTab(name) {
   $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === name));
   $('#tab-dashboard').hidden = name !== 'dashboard';
   $('#tab-authors').hidden = name !== 'authors';
+  updateHash();
 }
 $$('.tab').forEach((tab) => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
 
@@ -309,7 +352,7 @@ function renderPathOptions() {
     ...state.tree.dirs.map((d) => `${d}/`),
     ...state.tree.files,
   ];
-  datalist.innerHTML = options.map((o) => `<option value="${escapeHtml(o)}"></option>`).join('');
+  datalist.innerHTML = options.slice(0, 500).map((o) => `<option value="${escapeHtml(o)}"></option>`).join('');
 }
 
 function renderCommitFilterStatus() {
@@ -385,6 +428,8 @@ async function loadMetrics() {
     // Clear sort indicators
     $$('#files-table th[data-sortable], #dirs-table th[data-sortable]').forEach((th) => th.classList.remove('asc', 'desc'));
     renderMetrics(data);
+    state.commitCount = data.repository.totalCommits || 0;
+    renderRepoHeader();
     const filtered = data.filters.matchedCommits;
     $('#metrics-status').textContent =
       `Analysed ${fmtInt(filtered)} commit${filtered === 1 ? '' : 's'} matching the current filters · generated ${fmtDateTime(data.generatedAt)}`;
@@ -659,8 +704,9 @@ function renderAuthorDetail(container, author) {
       <td class="num">${((f.ownership ?? 0) * 100).toFixed(2)}%</td>
     </tr>
   `).join('');
-  const truncated = files.length > topFiles.length
-    ? `<p class="muted small">Showing top ${AUTHOR_FILES_LIMIT} of ${fmtInt(files.length)} file${files.length === 1 ? '' : 's'} by churn.</p>`
+  const totalFileCount = author.totalFiles || files.length;
+  const truncated = totalFileCount > topFiles.length
+    ? `<p class="muted small">Showing top ${AUTHOR_FILES_LIMIT} of ${fmtInt(totalFileCount)} file${totalFileCount === 1 ? '' : 's'} by churn.</p>`
     : '';
   container.innerHTML = `
     <div class="table-wrap">
@@ -779,28 +825,67 @@ function applyAuthorsPayload(data) {
 
 /* ---------------------------------------------------------------- commit picker */
 
-$('#pick-commits-btn').addEventListener('click', () => {
+let pickerAbort = null;
+
+async function fetchPickerPage(append = false) {
+  const id = state.currentRepoId;
+  if (!id) return;
+  if (pickerAbort) pickerAbort.abort();
+  pickerAbort = new AbortController();
+
+  const list = $('#commit-list');
+  if (!append) {
+    list.innerHTML = '<p class="muted small" style="padding:12px">Loading commits…</p>';
+  }
+
+  try {
+    const params = new URLSearchParams();
+    const q = state.picker.search;
+    if (q) params.set('q', q);
+    params.set('offset', String(state.pickerOffset));
+    params.set('limit', '200');
+
+    const data = await api(`/api/repos/${id}/commits?${params}`, { signal: pickerAbort.signal });
+
+    if (append) {
+      state.commits = state.commits.concat(data.commits || []);
+    } else {
+      state.commits = data.commits || [];
+    }
+    state.pickerTotal = data.total || 0;
+    state.pickerHasMore = data.hasMore || false;
+    state.pickerOffset = (data.offset || 0) + (data.commits || []).length;
+
+    renderCommitList();
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    list.innerHTML = '<p class="muted small" style="padding:12px">Failed to load commits.</p>';
+  }
+}
+
+$('#pick-commits-btn').addEventListener('click', async () => {
   state.picker.selected = new Set(state.filters.hashes);
   state.picker.search = '';
+  state.pickerOffset = 0;
+  state.pickerTotal = 0;
+  state.pickerHasMore = false;
   $('#commit-search').value = '';
-  renderCommitList();
   openModal('commits-modal');
+  await fetchPickerPage();
 });
 
+let pickerSearchTimer = null;
 $('#commit-search').addEventListener('input', () => {
   state.picker.search = $('#commit-search').value.trim().toLowerCase();
-  renderCommitList();
+  clearTimeout(pickerSearchTimer);
+  pickerSearchTimer = setTimeout(() => {
+    state.pickerOffset = 0;
+    fetchPickerPage();
+  }, 300);
 });
 
 function filteredCommits() {
-  const q = state.picker.search;
-  if (!q) return state.commits;
-  return state.commits.filter((c) =>
-    c.subject.toLowerCase().includes(q) ||
-    c.authorName.toLowerCase().includes(q) ||
-    c.hash.toLowerCase().startsWith(q) ||
-    c.shortHash.startsWith(q)
-  );
+  return state.commits;
 }
 
 const COMMIT_ROWS_LIMIT = 800;
@@ -819,15 +904,19 @@ function renderCommitList() {
       </label>
     `).join('')
     : '<p class="muted small" style="padding:12px">No commits match the search.</p>';
-  updatePickerCount(commits.length);
+  if (state.pickerHasMore) {
+    list.insertAdjacentHTML('beforeend',
+      '<button class="btn small load-more-btn" style="margin:8px auto;display:block">Load more commits…</button>');
+  }
+  updatePickerCount();
 }
 
-function updatePickerCount(visibleCount) {
-  const total = state.commits.length;
-  const shown = Math.min(visibleCount ?? filteredCommits().length, COMMIT_ROWS_LIMIT);
-  const truncated = (visibleCount ?? total) > COMMIT_ROWS_LIMIT ? ` (showing first ${COMMIT_ROWS_LIMIT})` : '';
+function updatePickerCount() {
+  const total = state.pickerTotal || state.commits.length;
+  const shown = Math.min(state.commits.length, COMMIT_ROWS_LIMIT);
+  const moreInfo = state.pickerHasMore ? ' (load more below)' : '';
   $('#commit-picker-count').textContent =
-    `${state.picker.selected.size} selected · ${shown} of ${visibleCount ?? total} shown${truncated}`;
+    `${state.picker.selected.size} selected · ${shown} of ${total} shown${moreInfo}`;
 }
 
 $('#commit-list').addEventListener('change', (e) => {
@@ -838,8 +927,14 @@ $('#commit-list').addEventListener('change', (e) => {
   updatePickerCount();
 });
 
+$('#commit-list').addEventListener('click', (e) => {
+  if (e.target.closest('.load-more-btn')) {
+    fetchPickerPage(true);
+  }
+});
+
 $('#select-all-commits').addEventListener('click', () => {
-  filteredCommits().slice(0, COMMIT_ROWS_LIMIT).forEach((c) => state.picker.selected.add(c.hash));
+  state.commits.slice(0, COMMIT_ROWS_LIMIT).forEach((c) => state.picker.selected.add(c.hash));
   renderCommitList();
 });
 
@@ -874,4 +969,23 @@ setupSortableTable('dirs-table',
   }
 );
 
-loadRepos().catch(showGlobalError);
+window.addEventListener('hashchange', () => {
+  const { repoId, tab } = parseHash();
+  if (!repoId) return;
+  const navigate = async () => {
+    if (repoId !== state.currentRepoId) await selectRepo(repoId);
+    if (state.currentRepoId === repoId) switchTab(tab);
+  };
+  navigate().catch(showGlobalError);
+});
+
+async function init() {
+  await loadRepos();
+  const { repoId, tab } = parseHash();
+  if (repoId) {
+    await selectRepo(repoId);
+    switchTab(tab);
+  }
+}
+
+init().catch(showGlobalError);

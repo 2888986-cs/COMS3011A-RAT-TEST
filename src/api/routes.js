@@ -154,6 +154,12 @@ router.post(
 router.get(
   '/repos/:id/commits',
   asyncHandler(async (req, res) => {
+    const hasQueryParams =
+      req.query.q !== undefined || req.query.offset !== undefined || req.query.limit !== undefined;
+    const parsedOffset = Math.max(0, Number.parseInt(req.query.offset, 10) || 0);
+    const parsedLimit =
+      req.query.limit === undefined ? undefined : Math.max(0, Number.parseInt(req.query.limit, 10) || 0);
+
     const entry = mustGetRepo(req.params.id);
     const repoData = await getRepoData(entry);
     const resolver = createAuthorResolver({
@@ -175,7 +181,34 @@ router.get(
         fileCount: commit.fileCount,
       };
     });
-    res.json({ commits, total: commits.length });
+
+    if (!hasQueryParams) {
+      res.json({ commits, total: commits.length });
+      return;
+    }
+
+    const query = req.query.q === undefined ? null : String(req.query.q).toLowerCase();
+    const filtered = query
+      ? commits.filter(
+          (commit) =>
+            commit.subject.toLowerCase().includes(query) ||
+            commit.authorName.toLowerCase().includes(query) ||
+            commit.hash.toLowerCase().startsWith(query) ||
+            commit.shortHash.toLowerCase().startsWith(query)
+        )
+      : commits;
+    const total = filtered.length;
+    const shouldSlice = req.query.limit !== undefined || req.query.offset !== undefined;
+    const slicedCommits = shouldSlice
+      ? filtered.slice(parsedOffset, parsedLimit === undefined ? undefined : parsedOffset + parsedLimit)
+      : filtered;
+
+    res.json({
+      commits: slicedCommits,
+      total,
+      offset: parsedOffset,
+      hasMore: parsedOffset + slicedCommits.length < total,
+    });
   })
 );
 
