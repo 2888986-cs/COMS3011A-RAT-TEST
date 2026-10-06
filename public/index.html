@@ -103,10 +103,11 @@
                 <h4>Commits per author</h4>
                 <div id="commitset-authors" class="hbars"></div>
               </div>
-              <div class="chart-block">
+              <div class="chart-block" style="position:relative">
                 <h4>Commits over time</h4>
                 <div id="commitset-timeline" class="timeline"></div>
                 <div class="timeline-labels" id="commitset-timeline-labels"></div>
+                <div class="tl-tooltip" id="tl-tooltip"></div>
               </div>
             </div>
 
@@ -116,9 +117,9 @@
                 <table id="files-table">
                   <thead>
                     <tr>
-                      <th>Path</th><th class="num">Commits</th><th class="num">+</th><th class="num">−</th>
-                      <th class="num">Churn</th><th class="num">Growth</th><th class="num">Mod Freq</th><th class="num">Churn Rate</th>
-                      <th class="num">Authors</th><th class="num">LOC (now)</th><th>Last change</th>
+                      <th>Path</th><th class="num" data-sortable="commits">Commits</th><th class="num" data-sortable="insertions">+</th><th class="num" data-sortable="deletions">−</th>
+                      <th class="num" data-sortable="churn">Churn</th><th class="num" data-sortable="growth">Growth</th><th class="num" data-sortable="modificationFrequency">Mod Freq</th><th class="num" data-sortable="churnRate">Churn Rate</th>
+                      <th class="num" data-sortable="authorCount">Authors</th><th class="num" data-sortable="currentLoc">LOC (now)</th><th>Last change</th>
                     </tr>
                   </thead>
                   <tbody></tbody>
@@ -133,9 +134,9 @@
                 <table id="dirs-table">
                   <thead>
                     <tr>
-                      <th>Directory</th><th class="num">Files</th><th class="num">Commits</th><th class="num">+</th>
-                      <th class="num">−</th><th class="num">Churn</th><th class="num">Growth</th><th class="num">Mod Freq</th><th class="num">Churn Rate</th>
-                      <th class="num">Authors</th><th class="num">LOC (now)</th>
+                      <th>Directory</th><th class="num" data-sortable="fileCount">Files</th><th class="num" data-sortable="commitCount">Commits</th><th class="num" data-sortable="insertions">+</th>
+                      <th class="num" data-sortable="deletions">−</th><th class="num" data-sortable="churn">Churn</th><th class="num" data-sortable="growth">Growth</th><th class="num" data-sortable="modificationFrequency">Mod Freq</th><th class="num" data-sortable="churnRate">Churn Rate</th>
+                      <th class="num" data-sortable="authorCount">Authors</th><th class="num" data-sortable="loc">LOC (now)</th>
                     </tr>
                   </thead>
                   <tbody></tbody>

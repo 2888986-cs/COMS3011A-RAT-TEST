@@ -12,11 +12,11 @@ const LOC_CONCURRENCY = 32;
 
 async function attachCurrentLoc(files, repoData) {
   const { locCache } = repoData;
-  const queue = [...files];
+  let idx = 0;
 
   async function worker() {
-    while (queue.length) {
-      const file = queue.shift();
+    while (idx < files.length) {
+      const file = files[idx++];
       if (locCache.has(file.path)) {
         file.loc = locCache.get(file.path);
         continue;

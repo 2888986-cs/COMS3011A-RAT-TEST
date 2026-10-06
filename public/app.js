@@ -13,6 +13,8 @@ const state = {
   picker: { selected: new Set(), search: '' },
   mergeSelection: new Set(),
   metrics: null,
+  fileSort: { key: null, asc: true },
+  dirSort: { key: null, asc: true },
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -30,6 +32,36 @@ const fmtDateTime = (iso) => {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
 };
 const fmtDay = (iso) => (iso ? String(iso).slice(0, 10) : '—');
+
+function setupSortableTable(tableId, getSortState, getDataArray, renderBodyFn) {
+  const table = $(`#${tableId}`);
+  if (!table) return;
+  table.querySelector('thead').addEventListener('click', (e) => {
+    const th = e.target.closest('th[data-sortable]');
+    if (!th) return;
+    const key = th.dataset.sortable;
+    const sortState = getSortState();
+    if (sortState.key === key) {
+      sortState.asc = !sortState.asc;
+    } else {
+      sortState.key = key;
+      sortState.asc = false; // default descending for numbers
+    }
+    const data = getDataArray();
+    if (!data) return;
+    data.sort((a, b) => {
+      let va = a[key] ?? 0, vb = b[key] ?? 0;
+      if (typeof va === 'string') return sortState.asc ? va.localeCompare(vb) : vb.localeCompare(va);
+      return sortState.asc ? va - vb : vb - va;
+    });
+    renderBodyFn(data);
+    // Update header classes
+    table.querySelectorAll('th[data-sortable]').forEach((h) => {
+      h.classList.remove('asc', 'desc');
+      if (h.dataset.sortable === key) h.classList.add(sortState.asc ? 'asc' : 'desc');
+    });
+  });
+}
 
 async function api(url, options = {}) {
   const opts = { ...options };
@@ -294,6 +326,7 @@ function renderCommitFilterStatus() {
 }
 
 let metricsTimer = null;
+let metricsAbort = null;
 function scheduleMetrics() {
   clearTimeout(metricsTimer);
   metricsTimer = setTimeout(() => loadMetrics().catch(showGlobalError), 250);
@@ -326,22 +359,45 @@ $('#clear-commits-btn').addEventListener('click', () => {
 async function loadMetrics() {
   const id = state.currentRepoId;
   if (!id) return;
-  $('#metrics-status').textContent = 'Analysing…';
-  $('#metrics-status').style.color = '';
-  const data = await api(`/api/repos/${id}/metrics`, {
-    method: 'POST',
-    body: JSON.stringify(state.filters),
-  });
-  if (state.currentRepoId !== id) return;
-  state.metrics = data;
-  renderMetrics(data);
-  const filtered = data.filters.matchedCommits;
-  $('#metrics-status').textContent =
-    `Analysed ${fmtInt(filtered)} commit${filtered === 1 ? '' : 's'} matching the current filters · generated ${fmtDateTime(data.generatedAt)}`;
+  if (metricsAbort) metricsAbort.abort();
+  metricsAbort = new AbortController();
+  const signal = metricsAbort.signal;
+  const cardsEl = $('.cards');
+  let shimmerTimer = setTimeout(() => { if (cardsEl) cardsEl.classList.add('loading-shimmer'); }, 150);
+  try {
+    $('#metrics-status').textContent = 'Analysing…';
+    $('#metrics-status').style.color = '';
+    const data = await api(`/api/repos/${id}/metrics`, {
+      method: 'POST',
+      body: JSON.stringify(state.filters),
+      signal,
+    });
+    if (state.currentRepoId !== id) {
+      clearTimeout(shimmerTimer);
+      if (cardsEl) cardsEl.classList.remove('loading-shimmer');
+      return;
+    }
+    state.metrics = data;
+    clearTimeout(shimmerTimer);
+    if (cardsEl) cardsEl.classList.remove('loading-shimmer');
+    state.fileSort = { key: null, asc: true };
+    state.dirSort = { key: null, asc: true };
+    // Clear sort indicators
+    $$('#files-table th[data-sortable], #dirs-table th[data-sortable]').forEach((th) => th.classList.remove('asc', 'desc'));
+    renderMetrics(data);
+    const filtered = data.filters.matchedCommits;
+    $('#metrics-status').textContent =
+      `Analysed ${fmtInt(filtered)} commit${filtered === 1 ? '' : 's'} matching the current filters · generated ${fmtDateTime(data.generatedAt)}`;
+  } catch (err) {
+    clearTimeout(shimmerTimer);
+    if (cardsEl) cardsEl.classList.remove('loading-shimmer');
+    if (err.name === 'AbortError') return; // superseded by newer request
+    throw err;
+  }
 }
 
-function stat(label, value, cls = '') {
-  return `<div class="stat"><span class="label">${label}</span><span class="value ${cls}">${value}</span></div>`;
+function stat(label, value, cls = '', highlight = false) {
+  return `<div class="stat${highlight ? ' stat--highlight' : ''}"><span class="label">${label}</span><span class="value ${cls}">${value}</span></div>`;
 }
 
 function renderMetrics(data) {
@@ -352,10 +408,39 @@ function renderMetrics(data) {
   renderAuthorMetrics(data.commitSet.authorFileMetrics);
 }
 
+const DONUT_COLORS = ['#4f8cff', '#35c58f', '#e5534b', '#f0a840', '#a371f7', '#3fb950', '#e06c75', '#56d4dd'];
+
+function renderDonut(items, size = 120) {
+  if (!items.length) return '';
+  const total = items.reduce((s, i) => s + i.value, 0);
+  if (total === 0) return '';
+  const r = size / 2 - 10;
+  const circumference = 2 * Math.PI * r;
+  let offset = 0;
+  const circles = items.map((item, idx) => {
+    const fraction = item.value / total;
+    const dash = fraction * circumference;
+    const circle = `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${DONUT_COLORS[idx % DONUT_COLORS.length]}" stroke-width="18" stroke-dasharray="${dash} ${circumference - dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${size / 2} ${size / 2})" />`;
+    offset += dash;
+    return circle;
+  });
+  const legend = items.map((item, idx) => `
+    <div class="donut-legend-item">
+      <span class="donut-swatch" style="background:${DONUT_COLORS[idx % DONUT_COLORS.length]}"></span>
+      <span>${escapeHtml(item.label)}</span>
+      <span class="muted small">${fmtInt(item.value)} (${(item.value / total * 100).toFixed(1)}%)</span>
+    </div>
+  `).join('');
+  return `<div class="donut-wrap">
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${circles.join('')}</svg>
+    <div class="donut-legend">${legend}</div>
+  </div>`;
+}
+
 function renderRepositoryCard(repo) {
   const ws = repo.workingTree || {};
   $('#repo-stats').innerHTML = [
-    stat('Commits (all)', fmtInt(repo.totalCommits)),
+    stat('Commits (all)', fmtInt(repo.totalCommits), '', true),
     stat('Authors (all)', fmtInt(repo.totalAuthors)),
     stat('Branch', escapeHtml(repo.defaultBranch || '—')),
     stat('Repo age', `${fmtInt(repo.ageDays)} days`),
@@ -363,18 +448,21 @@ function renderRepositoryCard(repo) {
     stat('Lines (working tree)', fmtInt(ws.totalLoc)),
     stat('Insertions (all)', fmtInt(repo.totalInsertions), 'pos'),
     stat('Deletions (all)', fmtInt(repo.totalDeletions), 'neg'),
-    stat('Total churn (all)', fmtInt(repo.totalChurn)),
+    stat('Total churn (all)', fmtInt(repo.totalChurn), '', true),
     stat('Growth (all)', fmtInt(repo.growth), repo.growth >= 0 ? 'pos' : 'neg'),
     stat('First commit', repo.firstCommit ? fmtDay(repo.firstCommit.date) : '—'),
     stat('Last commit', repo.lastCommit ? fmtDay(repo.lastCommit.date) : '—'),
   ].join('');
 
   const languages = (ws.byExtension || []).filter((l) => l.loc > 0).slice(0, 12);
-  $('#repo-languages').innerHTML = languages.length
-    ? `<div class="chart-block"><h4>Lines per file extension (working tree)</h4>${renderHBars(
-        languages.map((l) => ({ label: l.extension, value: l.loc, display: fmtInt(l.loc) }))
-      )}</div>`
-    : '';
+  if (languages.length) {
+    const donutItems = languages.slice(0, 8).map((l) => ({ label: l.extension, value: l.loc }));
+    const donut = renderDonut(donutItems);
+    const bars = renderHBars(languages.map((l) => ({ label: l.extension, value: l.loc, display: fmtInt(l.loc) })));
+    $('#repo-languages').innerHTML = `<div class="chart-block"><h4>Lines per file extension (working tree)</h4>${donut}${bars}</div>`;
+  } else {
+    $('#repo-languages').innerHTML = '';
+  }
 }
 
 function renderCommitSetCard(set, filters) {
@@ -384,13 +472,13 @@ function renderCommitSetCard(set, filters) {
   $('#commitset-hint').textContent = hint;
 
   $('#commitset-stats').innerHTML = [
-    stat('Commits', fmtInt(set.commitCount)),
+    stat('Commits', fmtInt(set.commitCount), '', true),
     stat('Authors', fmtInt(set.authorCount)),
     stat('Files touched', fmtInt(set.filesTouched)),
     stat('Insertions', fmtInt(set.totalInsertions), 'pos'),
     stat('Deletions', fmtInt(set.totalDeletions), 'neg'),
     stat('Net change', fmtInt(set.netChange), set.netChange >= 0 ? 'pos' : 'neg'),
-    stat('Total churn', fmtInt(set.totalChurn)),
+    stat('Total churn', fmtInt(set.totalChurn), '', true),
     stat('Avg files / commit', set.avgFilesPerCommit),
   ].join('');
 
@@ -430,51 +518,90 @@ function renderTimeline(commitsByDay) {
     </div>
   `).join('');
   labels.innerHTML = `<span>${shown[0].date}</span><span>${shown[shown.length - 1].date}</span>`;
+
+  const tooltip = $('#tl-tooltip');
+  if (tooltip && !container._tooltipAttached) {
+    container.addEventListener('mousemove', (e) => {
+      const col = e.target.closest('.tl-col');
+      if (!col) { tooltip.classList.remove('visible'); return; }
+      const title = col.getAttribute('title') || '';
+      tooltip.textContent = title;
+      const rect = container.getBoundingClientRect();
+      const colRect = col.getBoundingClientRect();
+      tooltip.style.left = `${colRect.left - rect.left + colRect.width / 2}px`;
+      tooltip.style.top = '-28px';
+      tooltip.classList.add('visible');
+    });
+    container.addEventListener('mouseleave', () => {
+      tooltip.classList.remove('visible');
+    });
+    container._tooltipAttached = true;
+  }
 }
 
 const FILE_ROWS_LIMIT = 100;
+function renderFileRow(f) {
+  return `<tr>
+    <td class="path">${escapeHtml(f.path)}</td>
+    <td class="num">${fmtInt(f.commits)}</td>
+    <td class="num"><span class="pos">+${fmtInt(f.insertions)}</span></td>
+    <td class="num"><span class="neg">−${fmtInt(f.deletions)}</span></td>
+    <td class="num">${fmtInt(f.churn)}</td>
+    <td class="num"><span class="${(f.growth ?? 0) >= 0 ? 'pos' : 'neg'}">${fmtInt(f.growth)}</span></td>
+    <td class="num">${f.modificationFrequency?.toFixed(4) ?? '—'}</td>
+    <td class="num">${f.churnRate?.toFixed(2) ?? '—'}</td>
+    <td class="num">${fmtInt(f.authorCount)}</td>
+    <td class="num">${f.currentLoc === null || f.currentLoc === undefined ? '<span class="muted">—</span>' : fmtInt(f.currentLoc)}</td>
+    <td>${fmtDay(f.lastDate)}</td>
+  </tr>`;
+}
+
 function renderFilesTable(files) {
   const tbody = $('#files-table tbody');
   const rows = (files.files || []).slice(0, FILE_ROWS_LIMIT);
-  tbody.innerHTML = rows.map((f) => `
-    <tr>
-      <td class="path">${escapeHtml(f.path)}</td>
-      <td class="num">${fmtInt(f.commits)}</td>
-      <td class="num"><span class="pos">+${fmtInt(f.insertions)}</span></td>
-      <td class="num"><span class="neg">−${fmtInt(f.deletions)}</span></td>
-      <td class="num">${fmtInt(f.churn)}</td>
-      <td class="num"><span class="${(f.growth ?? 0) >= 0 ? 'pos' : 'neg'}">${fmtInt(f.growth)}</span></td>
-      <td class="num">${f.modificationFrequency?.toFixed(4) ?? '—'}</td>
-      <td class="num">${f.churnRate?.toFixed(2) ?? '—'}</td>
-      <td class="num">${fmtInt(f.authorCount)}</td>
-      <td class="num">${f.currentLoc === null || f.currentLoc === undefined ? '<span class="muted">—</span>' : fmtInt(f.currentLoc)}</td>
-      <td>${fmtDay(f.lastDate)}</td>
-    </tr>
-  `).join('');
+  const churnValues = rows.map((f) => f.churn).sort((a, b) => a - b);
+  const modFreqValues = rows.map((f) => f.modificationFrequency ?? 0).sort((a, b) => a - b);
+  const churnP90 = churnValues[Math.floor(churnValues.length * 0.9)] || Infinity;
+  const modFreqP90 = modFreqValues[Math.floor(modFreqValues.length * 0.9)] || Infinity;
+  tbody.innerHTML = rows.map((f) => `<tr>
+    <td class="path">${escapeHtml(f.path)}</td>
+    <td class="num">${fmtInt(f.commits)}</td>
+    <td class="num"><span class="pos">+${fmtInt(f.insertions)}</span></td>
+    <td class="num"><span class="neg">−${fmtInt(f.deletions)}</span></td>
+    <td class="num${f.churn >= churnP90 ? ' hotspot' : ''}">${fmtInt(f.churn)}</td>
+    <td class="num"><span class="${(f.growth ?? 0) >= 0 ? 'pos' : 'neg'}">${fmtInt(f.growth)}</span></td>
+    <td class="num${(f.modificationFrequency ?? 0) >= modFreqP90 ? ' warm' : ''}">${f.modificationFrequency?.toFixed(4) ?? '—'}</td>
+    <td class="num">${f.churnRate?.toFixed(2) ?? '—'}</td>
+    <td class="num">${fmtInt(f.authorCount)}</td>
+    <td class="num">${f.currentLoc === null || f.currentLoc === undefined ? '<span class="muted">—</span>' : fmtInt(f.currentLoc)}</td>
+    <td>${fmtDay(f.lastDate)}</td>
+  </tr>`).join('');
   $('#files-empty').hidden = rows.length > 0;
   $('#files-hint').textContent = files.fileCount
     ? `${fmtInt(files.fileCount)} file${files.fileCount === 1 ? '' : 's'} in selection — top ${Math.min(FILE_ROWS_LIMIT, files.fileCount)} shown · LOC in selection: ${fmtInt(files.totalLoc)}`
     : 'no files match';
 }
 
+function renderDirRow(d) {
+  return `<tr>
+    <td class="path">${escapeHtml(d.path)}/</td>
+    <td class="num">${fmtInt(d.fileCount)}</td>
+    <td class="num">${fmtInt(d.commitCount)}</td>
+    <td class="num"><span class="pos">+${fmtInt(d.insertions)}</span></td>
+    <td class="num"><span class="neg">−${fmtInt(d.deletions)}</span></td>
+    <td class="num">${fmtInt(d.churn)}</td>
+    <td class="num"><span class="${(d.growth ?? 0) >= 0 ? 'pos' : 'neg'}">${fmtInt(d.growth)}</span></td>
+    <td class="num">${d.modificationFrequency?.toFixed(4) ?? '—'}</td>
+    <td class="num">${d.churnRate?.toFixed(2) ?? '—'}</td>
+    <td class="num">${fmtInt(d.authorCount)}</td>
+    <td class="num">${fmtInt(d.loc)}</td>
+  </tr>`;
+}
+
 function renderDirsTable(dirs) {
   const tbody = $('#dirs-table tbody');
   const rows = (dirs.directories || []).slice(0, 200);
-  tbody.innerHTML = rows.map((d) => `
-    <tr>
-      <td class="path">${escapeHtml(d.path)}/</td>
-      <td class="num">${fmtInt(d.fileCount)}</td>
-      <td class="num">${fmtInt(d.commitCount)}</td>
-      <td class="num"><span class="pos">+${fmtInt(d.insertions)}</span></td>
-      <td class="num"><span class="neg">−${fmtInt(d.deletions)}</span></td>
-      <td class="num">${fmtInt(d.churn)}</td>
-      <td class="num"><span class="${(d.growth ?? 0) >= 0 ? 'pos' : 'neg'}">${fmtInt(d.growth)}</span></td>
-      <td class="num">${d.modificationFrequency?.toFixed(4) ?? '—'}</td>
-      <td class="num">${d.churnRate?.toFixed(2) ?? '—'}</td>
-      <td class="num">${fmtInt(d.authorCount)}</td>
-      <td class="num">${fmtInt(d.loc)}</td>
-    </tr>
-  `).join('');
+  tbody.innerHTML = rows.map((d) => renderDirRow(d)).join('');
   $('#dirs-empty').hidden = rows.length > 0;
   $('#dirs-hint').textContent = dirs.directoryCount
     ? `${fmtInt(dirs.directoryCount)} director${dirs.directoryCount === 1 ? 'y' : 'ies'} in selection`
@@ -494,40 +621,56 @@ function renderAuthorMetrics(authorFileMetrics) {
   hint.textContent =
     `Per-author file activity in the current selection — ${fmtInt(authors.length)} author${authors.length === 1 ? '' : 's'}`;
 
-  content.innerHTML = authors.map((a, idx) => {
-    const files = a.files || [];
-    const topFiles = files.slice(0, AUTHOR_FILES_LIMIT);
-    const rows = topFiles.map((f) => `
-      <tr>
-        <td class="path">${escapeHtml(f.path)}</td>
-        <td class="num">${fmtInt(f.modifications)}</td>
-        <td class="num">${fmtInt(f.churn)}</td>
-        <td class="num">${((f.ownership ?? 0) * 100).toFixed(2)}%</td>
-      </tr>
-    `).join('');
-    const truncated = files.length > topFiles.length
-      ? `<p class="muted small">Showing top ${AUTHOR_FILES_LIMIT} of ${fmtInt(files.length)} file${files.length === 1 ? '' : 's'} by churn.</p>`
-      : '';
-    return `
-      <details class="author-block" ${idx === 0 ? 'open' : ''}>
-        <summary style="display:flex;gap:10px;align-items:baseline;cursor:pointer;padding:6px 2px">
-          <span class="author-name">${escapeHtml(a.authorName)}</span>
-          <span class="muted small">${fmtInt(a.totalModifications)} modification${a.totalModifications === 1 ? '' : 's'} · ${fmtInt(a.totalChurn)} churn</span>
-        </summary>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Path</th><th class="num">Modifications</th><th class="num">Churn</th><th class="num">Ownership</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-        ${truncated}
-      </details>
-    `;
-  }).join('');
+  content.innerHTML = authors.map((a, idx) => `
+    <details class="author-block" data-author-idx="${idx}" ${idx === 0 ? 'open' : ''}>
+      <summary style="display:flex;gap:10px;align-items:baseline;cursor:pointer;padding:6px 2px">
+        <span class="author-name">${escapeHtml(a.authorName)}</span>
+        <span class="muted small">${fmtInt(a.totalModifications)} modification${a.totalModifications === 1 ? '' : 's'} · ${fmtInt(a.totalChurn)} churn</span>
+      </summary>
+      <div class="author-detail"></div>
+    </details>
+  `).join('');
+
+  // Render the first (open) author's detail immediately
+  renderAuthorDetail(content.querySelector('details[open] .author-detail'), authors[0]);
+  content.querySelector('details[open]').setAttribute('data-rendered', 'true');
+
+  // Lazy-render others on toggle
+  content.addEventListener('toggle', (e) => {
+    const details = e.target.closest('details.author-block');
+    if (!details || details.dataset.rendered === 'true') return;
+    const idx = parseInt(details.dataset.authorIdx, 10);
+    const author = authors[idx];
+    if (!author) return;
+    renderAuthorDetail(details.querySelector('.author-detail'), author);
+    details.dataset.rendered = 'true';
+  }, true); // useCapture for toggle events on details
+}
+
+function renderAuthorDetail(container, author) {
+  if (!container || !author) return;
+  const files = author.files || [];
+  const topFiles = files.slice(0, AUTHOR_FILES_LIMIT);
+  const rows = topFiles.map((f) => `
+    <tr>
+      <td class="path">${escapeHtml(f.path)}</td>
+      <td class="num">${fmtInt(f.modifications)}</td>
+      <td class="num">${fmtInt(f.churn)}</td>
+      <td class="num">${((f.ownership ?? 0) * 100).toFixed(2)}%</td>
+    </tr>
+  `).join('');
+  const truncated = files.length > topFiles.length
+    ? `<p class="muted small">Showing top ${AUTHOR_FILES_LIMIT} of ${fmtInt(files.length)} file${files.length === 1 ? '' : 's'} by churn.</p>`
+    : '';
+  container.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Path</th><th class="num">Modifications</th><th class="num">Churn</th><th class="num">Ownership</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${truncated}
+  `;
 }
 
 /* ---------------------------------------------------------------- authors tab */
@@ -713,5 +856,22 @@ $('#apply-commits-btn').addEventListener('click', () => {
 });
 
 /* ---------------------------------------------------------------- init */
+
+setupSortableTable('files-table',
+  () => state.fileSort,
+  () => state.metrics?.files?.files,
+  (sorted) => {
+    const tbody = $('#files-table tbody');
+    tbody.innerHTML = sorted.slice(0, FILE_ROWS_LIMIT).map((f) => renderFileRow(f)).join('');
+  }
+);
+setupSortableTable('dirs-table',
+  () => state.dirSort,
+  () => state.metrics?.directories?.directories,
+  (sorted) => {
+    const tbody = $('#dirs-table tbody');
+    tbody.innerHTML = sorted.slice(0, 200).map((d) => renderDirRow(d)).join('');
+  }
+);
 
 loadRepos().catch(showGlobalError);

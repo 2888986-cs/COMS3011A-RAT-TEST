@@ -14,11 +14,11 @@ const EXT_BATCH = 64;
  */
 async function scanWorkingTree(root) {
   const files = await walkFiles(root);
-  const queue = [...files];
+  let idx = 0;
 
   async function worker() {
-    while (queue.length) {
-      const file = queue.shift();
+    while (idx < files.length) {
+      const file = files[idx++];
       let loc = null;
       try {
         const buffer = await fsp.readFile(path.join(root, file.path));
@@ -63,12 +63,16 @@ async function computeRepositoryMetrics(entry, repoData, resolver) {
   const newest = commits[0] || null;
   const oldest = commits[commits.length - 1] || null;
 
-  let totalInsertions = 0;
-  let totalDeletions = 0;
-  for (const commit of commits) {
-    totalInsertions += commit.insertions;
-    totalDeletions += commit.deletions;
+  if (!repoData.commitTotals) {
+    let totalInsertions = 0;
+    let totalDeletions = 0;
+    for (const commit of commits) {
+      totalInsertions += commit.insertions;
+      totalDeletions += commit.deletions;
+    }
+    repoData.commitTotals = { totalInsertions, totalDeletions };
   }
+  const { totalInsertions, totalDeletions } = repoData.commitTotals;
 
   return {
     name: entry.name,
